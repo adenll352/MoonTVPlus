@@ -82,6 +82,12 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   const [attemptedSources, setAttemptedSources] = useState<Set<string>>(
     new Set()
   );
+  // 存储正在重新测试的源
+  const [retestingSources, setRetestingSources] = useState<Set<string>>(
+    new Set()
+  );
+  // 标记初始测速是否已完成
+  const [initialTestingCompleted, setInitialTestingCompleted] = useState(false);
 
   // 使用 ref 来避免闭包问题
   const attemptedSourcesRef = useRef<Set<string>>(new Set());
@@ -229,11 +235,16 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         const batch = pendingSources.slice(start, start + batchSize);
         await Promise.all(batch.map(getVideoInfo));
       }
+
+      // 初始测速完成后，标记为已完成
+      if (!initialTestingCompleted) {
+        setInitialTestingCompleted(true);
+      }
     };
 
     fetchVideoInfosInBatches();
     // 依赖项保持与之前一致
-  }, [activeTab, availableSources, getVideoInfo, optimizationEnabled]);
+  }, [activeTab, availableSources, getVideoInfo, optimizationEnabled, initialTestingCompleted]);
 
   // 升序分页标签
   const categoriesAsc = useMemo(() => {
@@ -357,6 +368,58 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
       onSourceChange?.(source.source, source.id, source.title);
     },
     [onSourceChange]
+  );
+
+  // 解析网速字符串，转换为 KB/s 数值用于排序
+  const parseSpeedToKBps = useCallback((speedStr: string): number => {
+    if (!speedStr || speedStr === '未知' || speedStr === '测量中...') {
+      return -1; // 无效速度返回 -1，排在最后
+    }
+
+    const match = speedStr.match(/^([\d.]+)\s*(KB\/s|MB\/s)$/);
+    if (!match) {
+      return -1;
+    }
+
+    const value = parseFloat(match[1]);
+    const unit = match[2];
+
+    // 统一转换为 KB/s
+    return unit === 'MB/s' ? value * 1024 : value;
+  }, []);
+
+  // 重新测试单个源
+  const handleRetestSource = useCallback(
+    async (source: SearchResult, e: React.MouseEvent) => {
+      e.stopPropagation(); // 阻止事件冒泡，避免触发换源
+      const sourceKey = `${source.source}-${source.id}`;
+
+      // 标记为正在测试
+      setRetestingSources((prev) => new Set(prev).add(sourceKey));
+
+      // 从已尝试列表中移除，允许重新测试
+      setAttemptedSources((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(sourceKey);
+        return newSet;
+      });
+
+      // 同步更新 ref
+      attemptedSourcesRef.current.delete(sourceKey);
+
+      // 执行测试
+      try {
+        await getVideoInfo(source);
+      } finally {
+        // 无论成功或失败，都移除测试标记
+        setRetestingSources((prev) => {
+          const newSet = new Set(prev);
+          newSet.delete(sourceKey);
+          return newSet;
+        });
+      }
+    },
+    [getVideoInfo]
   );
 
   const currentStart = currentPage * episodesPerPage + 1;
@@ -575,8 +638,25 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                     const bIsCurrent =
                       b.source?.toString() === currentSource?.toString() &&
                       b.id?.toString() === currentId?.toString();
+
+                    // 当前源始终置顶
                     if (aIsCurrent && !bIsCurrent) return -1;
                     if (!aIsCurrent && bIsCurrent) return 1;
+
+                    // 如果初始测速已完成，按网速排序（快的在前）
+                    if (initialTestingCompleted) {
+                      const aKey = `${a.source}-${a.id}`;
+                      const bKey = `${b.source}-${b.id}`;
+                      const aInfo = videoInfoMap.get(aKey);
+                      const bInfo = videoInfoMap.get(bKey);
+
+                      const aSpeed = aInfo ? parseSpeedToKBps(aInfo.loadSpeed) : -1;
+                      const bSpeed = bInfo ? parseSpeedToKBps(bInfo.loadSpeed) : -1;
+
+                      // 速度快的排在前面（降序）
+                      return bSpeed - aSpeed;
+                    }
+
                     return 0;
                   })
                   .map((source, index) => {
@@ -678,30 +758,57 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                           </div>
 
                           {/* 网络信息 - 底部 */}
-                          <div className='flex items-end h-6'>
+                          <div className='flex items-end justify-between h-6'>
+                            <div className='flex items-end gap-3'>
+                              {(() => {
+                                const sourceKey = `${source.source}-${source.id}`;
+                                const videoInfo = videoInfoMap.get(sourceKey);
+                                if (videoInfo) {
+                                  if (!videoInfo.hasError) {
+                                    return (
+                                      <div className='flex items-end gap-3 text-xs'>
+                                        <div className='text-green-600 dark:text-green-400 font-medium text-xs'>
+                                          {videoInfo.loadSpeed}
+                                        </div>
+                                        <div className='text-orange-600 dark:text-orange-400 font-medium text-xs'>
+                                          {videoInfo.pingTime}ms
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    return (
+                                      <div className='text-red-500/90 dark:text-red-400 font-medium text-xs'>
+                                        无测速数据
+                                      </div>
+                                    );
+                                  }
+                                }
+                                return null;
+                              })()}
+                            </div>
+                            {/* 重新测试按钮 */}
                             {(() => {
                               const sourceKey = `${source.source}-${source.id}`;
+                              const isTesting = retestingSources.has(sourceKey);
                               const videoInfo = videoInfoMap.get(sourceKey);
+
+                              // 只有第一次测试完成后（有测速数据）才显示重新测试按钮
                               if (videoInfo) {
-                                if (!videoInfo.hasError) {
-                                  return (
-                                    <div className='flex items-end gap-3 text-xs'>
-                                      <div className='text-green-600 dark:text-green-400 font-medium text-xs'>
-                                        {videoInfo.loadSpeed}
-                                      </div>
-                                      <div className='text-orange-600 dark:text-orange-400 font-medium text-xs'>
-                                        {videoInfo.pingTime}ms
-                                      </div>
-                                    </div>
-                                  );
-                                } else {
-                                  return (
-                                    <div className='text-red-500/90 dark:text-red-400 font-medium text-xs'>
-                                      无测速数据
-                                    </div>
-                                  ); // 占位div
-                                }
+                                return (
+                                  <button
+                                    onClick={(e) => handleRetestSource(source, e)}
+                                    disabled={isTesting}
+                                    className={`text-xs font-medium transition-colors ${
+                                      isTesting
+                                        ? 'text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                        : 'text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 cursor-pointer'
+                                    }`}
+                                  >
+                                    {isTesting ? '测试中...' : '重新测试'}
+                                  </button>
+                                );
                               }
+                              return null;
                             })()}
                           </div>
                         </div>
