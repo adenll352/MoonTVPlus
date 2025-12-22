@@ -1,10 +1,9 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 
-import * as crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig, refineConfig } from '@/lib/config';
-import { db } from '@/lib/db';
+import { db, getStorage } from '@/lib/db';
 import { fetchVideoDetail } from '@/lib/fetchVideoDetail';
 import { refreshLiveChannels } from '@/lib/live';
 import { SearchResult } from '@/lib/types';
@@ -156,6 +155,7 @@ async function refreshRecordAndFavorites() {
 
     for (const user of users) {
       console.log(`开始处理用户: ${user}`);
+      const storage = getStorage();
 
       // 播放记录
       try {
@@ -216,6 +216,7 @@ async function refreshRecordAndFavorites() {
         );
         const totalFavorites = Object.keys(favorites).length;
         let processedFavorites = 0;
+        const now = Date.now();
 
         for (const [key, fav] of Object.entries(favorites)) {
           try {
@@ -245,6 +246,26 @@ async function refreshRecordAndFavorites() {
               console.log(
                 `更新收藏: ${fav.title} (${fav.total_episodes} -> ${favEpisodeCount})`
               );
+
+              // 创建通知
+              const notification = {
+                id: `fav_update_${source}_${id}_${now}`,
+                type: 'favorite_update' as const,
+                title: '收藏更新',
+                message: `《${fav.title}》有新集数更新！从 ${fav.total_episodes} 集更新到 ${favEpisodeCount} 集`,
+                timestamp: now,
+                read: false,
+                metadata: {
+                  source,
+                  id,
+                  title: fav.title,
+                  old_episodes: fav.total_episodes,
+                  new_episodes: favEpisodeCount,
+                },
+              };
+
+              await storage.addNotification(user, notification);
+              console.log(`已为用户 ${user} 创建收藏更新通知: ${fav.title}`);
             }
 
             processedFavorites++;
