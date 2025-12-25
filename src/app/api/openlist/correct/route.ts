@@ -27,7 +27,18 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { folder, tmdbId, title, posterPath, releaseDate, overview, voteAverage, mediaType } = body;
+    const {
+      folder,
+      tmdbId,
+      title,
+      posterPath,
+      releaseDate,
+      overview,
+      voteAverage,
+      mediaType,
+      seasonNumber,
+      seasonName,
+    } = body;
 
     if (!folder || !tmdbId) {
       return NextResponse.json(
@@ -97,6 +108,8 @@ export async function POST(request: NextRequest) {
       media_type: mediaType,
       last_updated: Date.now(),
       failed: false, // 纠错后标记为成功
+      season_number: seasonNumber, // 季度编号（可选）
+      season_name: seasonName, // 季度名称（可选）
     };
 
     // 保存 metainfo 到数据库

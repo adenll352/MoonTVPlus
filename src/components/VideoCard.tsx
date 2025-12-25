@@ -49,6 +49,8 @@ export interface VideoCardProps {
   origin?: 'vod' | 'live';
   releaseDate?: string; // 上映日期，格式：YYYY-MM-DD
   isUpcoming?: boolean; // 是否为即将上映
+  seasonNumber?: number; // 季度编号
+  seasonName?: string; // 季度名称
 }
 
 export type VideoCardHandle = {
@@ -80,6 +82,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
     origin = 'vod',
     releaseDate,
     isUpcoming = false,
+    seasonNumber,
+    seasonName,
   }: VideoCardProps,
   ref
 ) {
@@ -772,6 +776,25 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               }}
             >
               {actualYear}
+            </div>
+          )}
+
+          {/* 季度徽章 */}
+          {seasonNumber && (
+            <div
+              className="absolute top-2 left-2 bg-blue-500/80 text-white text-xs font-medium px-2 py-1 rounded backdrop-blur-sm shadow-sm transition-all duration-300 ease-out group-hover:opacity-90"
+              style={{
+                WebkitUserSelect: 'none',
+                userSelect: 'none',
+                WebkitTouchCallout: 'none',
+              } as React.CSSProperties}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                return false;
+              }}
+              title={seasonName || `第${seasonNumber}季`}
+            >
+              S{seasonNumber}
             </div>
           )}
 

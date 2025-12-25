@@ -28,6 +28,8 @@ export interface MetaInfo {
       media_type: 'movie' | 'tv';
       last_updated: number;
       failed?: boolean; // 标记是否搜索失败
+      season_number?: number; // 季度编号（仅电视剧）
+      season_name?: string; // 季度名称（仅电视剧）
     };
   };
   last_refresh: number;

@@ -22,6 +22,16 @@ interface TMDBResult {
   media_type: 'movie' | 'tv';
 }
 
+interface TMDBSeason {
+  id: number;
+  name: string;
+  season_number: number;
+  episode_count: number;
+  air_date: string | null;
+  poster_path: string | null;
+  overview: string;
+}
+
 interface CorrectDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -43,11 +53,20 @@ export default function CorrectDialog({
   const [error, setError] = useState('');
   const [correcting, setCorrecting] = useState(false);
 
+  // 季度选择相关状态
+  const [selectedResult, setSelectedResult] = useState<TMDBResult | null>(null);
+  const [seasons, setSeasons] = useState<TMDBSeason[]>([]);
+  const [loadingSeasons, setLoadingSeasons] = useState(false);
+  const [showSeasonSelection, setShowSeasonSelection] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
       setSearchQuery(currentTitle);
       setResults([]);
       setError('');
+      setSelectedResult(null);
+      setSeasons([]);
+      setShowSeasonSelection(false);
     }
   }, [isOpen, currentTitle]);
 
@@ -60,6 +79,8 @@ export default function CorrectDialog({
     setSearching(true);
     setError('');
     setResults([]);
+    setShowSeasonSelection(false);
+    setSelectedResult(null);
 
     try {
       const response = await fetch(
@@ -88,22 +109,99 @@ export default function CorrectDialog({
     }
   };
 
-  const handleCorrect = async (result: TMDBResult) => {
+  // 获取电视剧的季度列表
+  const fetchSeasons = async (tvId: number) => {
+    setLoadingSeasons(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/tmdb/seasons?tvId=${tvId}`);
+
+      if (!response.ok) {
+        throw new Error('获取季度列表失败');
+      }
+
+      const data = await response.json();
+
+      if (data.success && data.seasons) {
+        return data.seasons as TMDBSeason[];
+      } else {
+        setError('获取季度列表失败');
+        return [];
+      }
+    } catch (err) {
+      console.error('获取季度列表失败:', err);
+      setError('获取季度列表失败，请重试');
+      return [];
+    } finally {
+      setLoadingSeasons(false);
+    }
+  };
+
+  // 处理选择结果（电影直接纠错，电视剧显示季度选择）
+  const handleSelectResult = async (result: TMDBResult) => {
+    if (result.media_type === 'tv') {
+      // 电视剧：先获取季度列表
+      setSelectedResult(result);
+      const seasonsList = await fetchSeasons(result.id);
+
+      if (seasonsList.length === 1) {
+        // 只有一季，直接使用该季度进行纠错
+        await handleCorrect(result, seasonsList[0]);
+      } else if (seasonsList.length > 1) {
+        // 多季，显示选择界面
+        setSeasons(seasonsList);
+        setShowSeasonSelection(true);
+      } else {
+        // 没有季度信息，直接使用剧集信息
+        await handleCorrect(result);
+      }
+    } else {
+      // 电影：直接纠错
+      await handleCorrect(result);
+    }
+  };
+
+  // 处理选择季度
+  const handleSelectSeason = async (season: TMDBSeason) => {
+    if (!selectedResult) return;
+
+    await handleCorrect(selectedResult, season);
+  };
+
+  // 执行纠错
+  const handleCorrect = async (result: TMDBResult, season?: TMDBSeason) => {
     setCorrecting(true);
     try {
+      // 构建标题和ID：如果是第二季及以后，在标题后加上季度名称，并使用季度ID
+      let finalTitle = result.title || result.name;
+      let finalTmdbId = result.id;
+
+      if (season && season.season_number > 1) {
+        finalTitle = `${finalTitle} ${season.name}`;
+        finalTmdbId = season.id; // 使用季度的ID
+      }
+
+      const body: any = {
+        folder,
+        tmdbId: finalTmdbId,
+        title: finalTitle,
+        posterPath: season?.poster_path || result.poster_path,
+        releaseDate: season?.air_date || result.release_date || result.first_air_date,
+        overview: season?.overview || result.overview,
+        voteAverage: result.vote_average,
+        mediaType: result.media_type,
+      };
+
+      // 如果有季度信息，添加到请求中
+      if (season) {
+        body.seasonNumber = season.season_number;
+        body.seasonName = season.name;
+      }
+
       const response = await fetch('/api/openlist/correct', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folder,
-          tmdbId: result.id,
-          title: result.title || result.name,
-          posterPath: result.poster_path,
-          releaseDate: result.release_date || result.first_air_date,
-          overview: result.overview,
-          voteAverage: result.vote_average,
-          mediaType: result.media_type,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
@@ -118,6 +216,13 @@ export default function CorrectDialog({
     } finally {
       setCorrecting(false);
     }
+  };
+
+  // 返回搜索结果列表
+  const handleBackToResults = () => {
+    setShowSeasonSelection(false);
+    setSelectedResult(null);
+    setSeasons([]);
   };
 
   if (!isOpen) return null;
@@ -169,11 +274,98 @@ export default function CorrectDialog({
 
         {/* 结果列表 */}
         <div className='flex-1 overflow-y-auto p-4'>
-          {results.length === 0 ? (
+          {showSeasonSelection ? (
+            // 季度选择界面
+            <div>
+              <div className='mb-4 flex items-center gap-2'>
+                <button
+                  onClick={handleBackToResults}
+                  className='text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 flex items-center gap-1'
+                >
+                  <span>←</span>
+                  <span>返回搜索结果</span>
+                </button>
+              </div>
+
+              {selectedResult && (
+                <div className='mb-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg'>
+                  <h3 className='font-semibold text-gray-900 dark:text-gray-100'>
+                    {selectedResult.title || selectedResult.name}
+                  </h3>
+                  <p className='text-sm text-gray-600 dark:text-gray-400 mt-1'>
+                    请选择季度：
+                  </p>
+                </div>
+              )}
+
+              {loadingSeasons ? (
+                <div className='text-center py-12 text-gray-500 dark:text-gray-400'>
+                  加载季度列表中...
+                </div>
+              ) : seasons.length === 0 ? (
+                <div className='text-center py-12 text-gray-500 dark:text-gray-400'>
+                  未找到季度信息
+                </div>
+              ) : (
+                <div className='space-y-3'>
+                  {seasons.map((season) => (
+                    <div
+                      key={season.id}
+                      className='flex gap-3 p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors'
+                    >
+                      {/* 海报 */}
+                      <div className='flex-shrink-0 w-16 h-24 relative rounded overflow-hidden bg-gray-200 dark:bg-gray-700'>
+                        {season.poster_path ? (
+                          <Image
+                            src={processImageUrl(getTMDBImageUrl(season.poster_path))}
+                            alt={season.name}
+                            fill
+                            className='object-cover'
+                            referrerPolicy='no-referrer'
+                          />
+                        ) : (
+                          <div className='w-full h-full flex items-center justify-center text-gray-400 text-xs'>
+                            无海报
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 信息 */}
+                      <div className='flex-1 min-w-0'>
+                        <h3 className='font-semibold text-gray-900 dark:text-gray-100'>
+                          {season.name}
+                        </h3>
+                        <p className='text-sm text-gray-600 dark:text-gray-400 mt-1'>
+                          {season.episode_count} 集
+                          {season.air_date && ` • ${season.air_date.split('-')[0]}`}
+                        </p>
+                        <p className='text-xs text-gray-500 dark:text-gray-500 mt-1 line-clamp-2'>
+                          {season.overview || '暂无简介'}
+                        </p>
+                      </div>
+
+                      {/* 选择按钮 */}
+                      <div className='flex-shrink-0 flex items-center'>
+                        <button
+                          onClick={() => handleSelectSeason(season)}
+                          disabled={correcting}
+                          className='px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed'
+                        >
+                          {correcting ? '处理中...' : '选择'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : results.length === 0 ? (
+            // 空状态
             <div className='text-center py-12 text-gray-500 dark:text-gray-400'>
               {searching ? '搜索中...' : '请输入关键词搜索'}
             </div>
           ) : (
+            // 搜索结果列表
             <div className='space-y-3'>
               {results.map((result) => (
                 <div
@@ -217,11 +409,11 @@ export default function CorrectDialog({
                   {/* 选择按钮 */}
                   <div className='flex-shrink-0 flex items-center'>
                     <button
-                      onClick={() => handleCorrect(result)}
-                      disabled={correcting}
+                      onClick={() => handleSelectResult(result)}
+                      disabled={correcting || loadingSeasons}
                       className='px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed'
                     >
-                      {correcting ? '处理中...' : '选择'}
+                      {correcting || loadingSeasons ? '处理中...' : '选择'}
                     </button>
                   </div>
                 </div>

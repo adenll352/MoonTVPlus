@@ -19,7 +19,8 @@ import {
   failScanTask,
   updateScanTaskProgress,
 } from '@/lib/scan-task';
-import { searchTMDB } from '@/lib/tmdb.search';
+import { parseSeasonFromTitle } from '@/lib/season-parser';
+import { searchTMDB, getTVSeasonDetails } from '@/lib/tmdb.search';
 
 export const runtime = 'nodejs';
 
@@ -200,17 +201,25 @@ async function performScan(
       }
 
       try {
-        // 搜索 TMDB
+        // 解析文件夹名称，提取季度信息
+        const seasonInfo = parseSeasonFromTitle(folder.name);
+        const searchQuery = seasonInfo.cleanTitle || folder.name;
+
+        console.log(`[OpenList Refresh] 处理文件夹: ${folder.name}`);
+        console.log(`[OpenList Refresh] 清理后标题: ${searchQuery}, 季度: ${seasonInfo.seasonNumber}`);
+
+        // 搜索 TMDB（使用清理后的标题）
         const searchResult = await searchTMDB(
           tmdbApiKey,
-          folder.name,
+          searchQuery,
           tmdbProxy
         );
 
         if (searchResult.code === 200 && searchResult.result) {
           const result = searchResult.result;
 
-          metaInfo.folders[folder.name] = {
+          // 基础信息
+          const folderInfo: any = {
             tmdb_id: result.id,
             title: result.title || result.name || folder.name,
             poster_path: result.poster_path,
@@ -222,6 +231,51 @@ async function performScan(
             failed: false,
           };
 
+          // 如果是电视剧且识别到季度编号，获取该季度的详细信息
+          if (result.media_type === 'tv' && seasonInfo.seasonNumber) {
+            try {
+              const seasonDetails = await getTVSeasonDetails(
+                tmdbApiKey,
+                result.id,
+                seasonInfo.seasonNumber,
+                tmdbProxy
+              );
+
+              if (seasonDetails.code === 200 && seasonDetails.season) {
+                folderInfo.season_number = seasonDetails.season.season_number;
+                folderInfo.season_name = seasonDetails.season.name;
+
+                // 如果是第二季及以后，替换标题和ID
+                if (seasonDetails.season.season_number > 1) {
+                  folderInfo.title = `${folderInfo.title} ${seasonDetails.season.name}`;
+                  folderInfo.tmdb_id = seasonDetails.season.id; // 使用季度的ID
+                }
+
+                // 使用季度的海报（如果有）
+                if (seasonDetails.season.poster_path) {
+                  folderInfo.poster_path = seasonDetails.season.poster_path;
+                }
+                // 使用季度的简介（如果有）
+                if (seasonDetails.season.overview) {
+                  folderInfo.overview = seasonDetails.season.overview;
+                }
+                // 使用季度的首播日期（如果有）
+                if (seasonDetails.season.air_date) {
+                  folderInfo.release_date = seasonDetails.season.air_date;
+                }
+              } else {
+                console.warn(`[OpenList Refresh] 获取季度 ${seasonInfo.seasonNumber} 详情失败`);
+                // 即使获取季度详情失败，也保存季度编号
+                folderInfo.season_number = seasonInfo.seasonNumber;
+              }
+            } catch (error) {
+              console.error(`[OpenList Refresh] 获取季度详情异常:`, error);
+              // 即使出错，也保存季度编号
+              folderInfo.season_number = seasonInfo.seasonNumber;
+            }
+          }
+
+          metaInfo.folders[folder.name] = folderInfo;
           newCount++;
         } else {
           // 记录失败的文件夹

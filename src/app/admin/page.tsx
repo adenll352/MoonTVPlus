@@ -3227,6 +3227,9 @@ const OpenListConfigComponent = ({
                       类型
                     </th>
                     <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
+                      季度
+                    </th>
+                    <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                       年份
                     </th>
                     <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
@@ -3256,6 +3259,15 @@ const OpenListConfigComponent = ({
                       </td>
                       <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400'>
                         {video.mediaType === 'movie' ? '电影' : '剧集'}
+                      </td>
+                      <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400'>
+                        {video.seasonNumber ? (
+                          <span className='inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200' title={video.seasonName || `第${video.seasonNumber}季`}>
+                            S{video.seasonNumber}
+                          </span>
+                        ) : (
+                          '-'
+                        )}
                       </td>
                       <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400'>
                         {video.releaseDate ? video.releaseDate.split('-')[0] : '-'}
