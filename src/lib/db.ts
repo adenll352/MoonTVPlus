@@ -6,13 +6,14 @@ import { RedisStorage } from './redis.db';
 import { DanmakuFilterConfig,Favorite, IStorage, PlayRecord, SkipConfig } from './types';
 import { UpstashRedisStorage } from './upstash.db';
 
-// storage type 常量: 'localstorage' | 'redis' | 'upstash'，默认 'localstorage'
+// storage type 常量: 'localstorage' | 'redis' | 'upstash' | 'kvrocks' | 'd1'，默认 'localstorage'
 const STORAGE_TYPE =
   (process.env.NEXT_PUBLIC_STORAGE_TYPE as
     | 'localstorage'
     | 'redis'
     | 'upstash'
     | 'kvrocks'
+    | 'd1'
     | undefined) || 'localstorage';
 
 // 创建存储实例
@@ -24,10 +25,65 @@ function createStorage(): IStorage {
       return new UpstashRedisStorage();
     case 'kvrocks':
       return new KvrocksStorage();
+    case 'd1':
+      // D1Storage 只能在服务端使用，客户端会报错
+      if (typeof window !== 'undefined') {
+        throw new Error('D1Storage can only be used on the server side');
+      }
+      const adapter = getD1Adapter();
+      // 动态导入 D1Storage 以避免客户端打包
+      const { D1Storage } = require('./d1.db');
+      return new D1Storage(adapter);
     case 'localstorage':
     default:
       return null as unknown as IStorage;
   }
+}
+
+/**
+ * 获取 D1 适配器
+ * 开发环境：使用 better-sqlite3
+ * 生产环境：使用 Cloudflare D1
+ */
+function getD1Adapter(): any {
+  // 动态导入适配器以避免客户端打包
+  const { CloudflareD1Adapter, SQLiteAdapter } = require('./d1-adapter');
+
+  // 生产环境：Cloudflare Workers/Pages
+  if (typeof process !== 'undefined' && (process as any).env?.DB) {
+    console.log('Using Cloudflare D1 database');
+    return new CloudflareD1Adapter((process as any).env.DB);
+  }
+
+  // 开发环境：better-sqlite3
+  if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+    try {
+      const Database = require('better-sqlite3');
+      const path = require('path');
+      const fs = require('fs');
+
+      const dbPath = path.join(process.cwd(), '.data', 'moontv.db');
+
+      // 检查数据库文件是否存在
+      if (!fs.existsSync(dbPath)) {
+        console.error('❌ SQLite database not found. Please run: npm run init:sqlite');
+        throw new Error('SQLite database not initialized');
+      }
+
+      const db = new Database(dbPath);
+      db.pragma('journal_mode = WAL'); // 启用 WAL 模式提升性能
+
+      console.log('Using SQLite database (development mode)');
+      console.log('Database location:', dbPath);
+
+      return new SQLiteAdapter(db);
+    } catch (err) {
+      console.error('Failed to initialize SQLite:', err);
+      throw err;
+    }
+  }
+
+  throw new Error('D1 database not available. Set NEXT_PUBLIC_STORAGE_TYPE to another option or configure D1.');
 }
 
 // 单例存储实例
