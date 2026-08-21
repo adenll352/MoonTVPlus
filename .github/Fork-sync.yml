@@ -1,0 +1,51 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    # 每天北京时间 12:00（UTC 04:00）
+    - cron: "0 4 * * *"
+  workflow_dispatch:  # 允许手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  sync_latest_from_upstream:
+    name: Sync latest commits from upstream
+    runs-on: ubuntu-latest
+    # 只在 fork 仓库上运行，避免在原仓库误触发
+    if: ${{ github.event.repository.fork }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 使用带 workflow 权限的 PAT，避免推送 .github/workflows 时被拒绝
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        with:
+          upstream_sync_repo: mtvpls/MoonTVPlus
+          upstream_sync_branch: main
+          target_sync_branch: main
+          # 同样使用 SYNC_TOKEN
+          target_repo_token: ${{ secrets.SYNC_TOKEN }}
+          test_mode: false
+
+      - name: Sync check
+        if: failure()
+        run: |
+          echo "========================================"
+          echo "[Error] 同步失败，可能原因："
+          echo "1. 上游修改了 .github/workflows 文件，而 token 权限不足"
+          echo "2. 存在冲突，需要手动处理"
+          echo "3. SYNC_TOKEN 未配置或已过期"
+          echo ""
+          echo "建议操作："
+          echo "- 检查 Secrets 中是否存在有效的 SYNC_TOKEN（需要 repo + workflow 权限）"
+          echo "- 或到仓库页面点击 Sync fork 手动同步一次"
+          echo "========================================"
+          exit 1
